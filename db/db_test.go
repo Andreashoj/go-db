@@ -3,22 +3,27 @@ package db
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
 
-func TestDb_Set_RaceConditions(t *testing.T) {
-	// Should test race conditions primarily
-	DB, err := NewDB("../test/test-db.txt")
-	if err != nil {
-		t.Errorf("failed creating db: %s", err)
-	}
+func freshDB() DB {
+	db, _ := NewDB("../test/test-db.txt")
+	db.clear()
+	return db
+}
+
+func TestDb_Set_Ordering(t *testing.T) {
+	DB := freshDB()
 
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
-		go wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			DB.Set(fmt.Sprintf("test-val-%v", i), strconv.Itoa(i))
-		})
+		}()
 	}
 
 	wg.Wait()
@@ -31,35 +36,41 @@ func TestDb_Set_RaceConditions(t *testing.T) {
 	}
 }
 
-func freshDB() DB {
+func TestDb_ValidData(t *testing.T) {
+	DB := freshDB()
 
-	db, _ := NewDB("../test/test-db.txt")
-	return db
-}
-func TestDb_Set_Get_RaceConditions(t *testing.T) {
-	// Should ensure that no partial reads happen due to race conditions
-	DB, err := NewDB("../test/test-db.txt")
-	if err != nil {
-		t.Errorf("failed creating db: %s", err)
+	// Seed data
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("key-%v", i)
+		val := fmt.Sprintf("my-long-value-%v", i)
+		DB.Set(key, val)
 	}
+	DB.wait()
 
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		key := fmt.Sprintf("key-%v", i)
+		val := fmt.Sprintf("my-long-value-%v", i)
+
 		go func() {
-			wg.Add(1)
-			_, err := DB.Get(fmt.Sprintf("test-val-%v", i))
-			if err == nil {
-				t.Errorf("did not expect to have read value for key: %s", fmt.Sprintf("test-val-%v", i))
+			defer wg.Done()
+			dbVal, err := DB.Get(key)
+			if err != nil {
+				t.Errorf("failed retrieving value for key %s", key)
 			}
-			wg.Done()
+
+			if !strings.Contains(dbVal, "my-long-value-") {
+				t.Errorf("val did not contain the expected value %s, got %s", val, dbVal)
+			}
 		}()
 
 		go func() {
-			wg.Add(1)
-			DB.Set(fmt.Sprintf("test-val-%v", i), strconv.Itoa(i))
-			wg.Done()
+			longerVal := fmt.Sprintf("my-long-value-%v-that-is-super-cool", i)
+			DB.Set(key, longerVal)
 		}()
 	}
 
 	wg.Wait()
+	DB.wait()
 }

@@ -12,6 +12,8 @@ type DB interface {
 	Get(key string) (string, error)
 	Delete(key string)
 	startQueueHandler()
+	clear()
+	wait()
 }
 
 type db struct {
@@ -95,4 +97,15 @@ func (d *db) save() {
 	d.file.Truncate(0)
 	d.file.Write(JSON)
 	d.file.Sync()
+}
+
+func (d *db) clear() {
+	d.file.Seek(0, 0)
+	d.file.Truncate(0)
+	d.file.Write([]byte(""))
+	d.file.Sync()
+}
+
+func (d *db) wait() {
+	d.wg.Wait()
 }

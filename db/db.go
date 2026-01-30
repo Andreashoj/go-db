@@ -11,9 +11,11 @@ type DB interface {
 	Set(key, value string)
 	Get(key string) (string, error)
 	Delete(key string)
+	Find(handler func(item map[string]interface{}) bool) (map[string]interface{}, error)
+	Where(handler func(item map[string]interface{}) bool) ([]map[string]interface{}, error)
 	startQueueHandler()
 	clear()
-	wait()
+	Sync()
 }
 
 type db struct {
@@ -53,7 +55,8 @@ func NewDB(filePath string) (DB, error) {
 func (d *db) startQueueHandler() {
 	for v := range d.requests {
 		d.mu.Lock()
-		d.set(v[0], v[1])
+		key, val := v[0], v[1]
+		d.set(key, val)
 		d.wg.Done()
 		d.mu.Unlock()
 	}
@@ -69,7 +72,7 @@ func (d *db) set(key, value string) {
 	d.save()
 }
 
-func (d *db) Get(key string) (string, error) {
+func (d *db) Get(key string) (string, error) { // TODO: Allow multiple reads to happen at once
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -86,6 +89,40 @@ func (d *db) Delete(key string) {
 	d.save()
 }
 
+func (d *db) Where(handler func(item map[string]interface{}) bool) ([]map[string]interface{}, error) {
+	var matches []map[string]interface{}
+	for k, v := range d.store {
+		var doc map[string]interface{}
+		err := json.Unmarshal([]byte(v), &doc)
+		if err != nil {
+			return nil, fmt.Errorf("failed decoding value %s for key %s with error %s", v, k, err)
+		}
+
+		if handler(doc) {
+			matches = append(matches, doc)
+		}
+	}
+
+	return matches, nil
+}
+
+func (d *db) Find(handler func(item map[string]interface{}) bool) (map[string]interface{}, error) {
+	for key, value := range d.store {
+		var mappedItem interface{}
+		err := json.Unmarshal([]byte(value), &mappedItem)
+		docMap := mappedItem.(map[string]interface{})
+		if err != nil {
+			return nil, fmt.Errorf("failed decoding entry %s with error :%s", key, err)
+		}
+
+		if handler(docMap) {
+			return docMap, nil
+		}
+	}
+
+	return nil, fmt.Errorf("couldn't find the entry you were looking for")
+}
+
 func (d *db) save() {
 	JSON, err := json.Marshal(d.store)
 	if err != nil {
@@ -99,6 +136,7 @@ func (d *db) save() {
 	d.file.Sync()
 }
 
+// TODO: Maybe create another db struct for testing specifically ?
 func (d *db) clear() {
 	d.file.Seek(0, 0)
 	d.file.Truncate(0)
@@ -106,6 +144,6 @@ func (d *db) clear() {
 	d.file.Sync()
 }
 
-func (d *db) wait() {
+func (d *db) Sync() {
 	d.wg.Wait()
 }

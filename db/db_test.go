@@ -45,7 +45,7 @@ func TestDb_ValidData(t *testing.T) {
 		val := fmt.Sprintf("my-long-value-%v", i)
 		DB.Set(key, val)
 	}
-	DB.wait()
+	DB.Sync()
 
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
@@ -72,5 +72,109 @@ func TestDb_ValidData(t *testing.T) {
 	}
 
 	wg.Wait()
-	DB.wait()
+	DB.Sync()
+}
+
+func TestDb_Find(t *testing.T) {
+	DB := freshDB()
+
+	// Seed
+	for i := 0; i < 10; i++ {
+		key := fmt.Sprintf("key-%v", i)
+		value := fmt.Sprintf("{\"value\": \"value-%v\"}", i)
+		DB.Set(key, value)
+	}
+
+	DB.Sync()
+
+	for i := 0; i < 10; i++ {
+		val := fmt.Sprintf("value-%v", i)
+
+		value, err := DB.Find(func(item map[string]interface{}) bool {
+			return item["value"] == val
+		})
+
+		if err != nil {
+			t.Errorf("didn't expect an error here: %s", err)
+		}
+
+		if value["value"] != val {
+			t.Errorf("expected %s to be equal %s", value["value"], val)
+		}
+	}
+}
+
+func TestDb_FindShouldFail(t *testing.T) {
+	DB := freshDB()
+
+	// Seed
+	for i := 0; i < 10; i++ {
+		key := fmt.Sprintf("key-%v", i)
+		value := fmt.Sprintf("{\"value\": \"value-%v\"}", i)
+		DB.Set(key, value)
+	}
+
+	DB.Sync()
+
+	for i := 11; i < 21; i++ {
+		val := fmt.Sprintf("value-%v", i)
+
+		value, err := DB.Find(func(item map[string]interface{}) bool {
+			return item["value"] == val
+		})
+
+		if err == nil {
+			t.Errorf("expected the find to fail, instead got value %s", value)
+		}
+	}
+}
+
+func TestDb_Where(t *testing.T) {
+	DB := freshDB()
+
+	// Seed
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("key-%v", i)
+		value := fmt.Sprintf("{\"value\": %v}", i)
+		DB.Set(key, value)
+	}
+
+	DB.Sync()
+
+	items, err := DB.Where(func(item map[string]interface{}) bool {
+		return int(item["value"].(float64))%2 == 0
+	})
+
+	if err != nil {
+		t.Errorf("didn't expect an error here: %s", err)
+	}
+
+	if len(items) != 50 {
+		t.Errorf("expected length to be 50 but got %v", len(items))
+	}
+}
+
+func TestDb_WhereShouldReturnEmpty(t *testing.T) {
+	DB := freshDB()
+
+	// Seed
+	for i := 0; i < 100; i++ {
+		key := fmt.Sprintf("key-%v", i)
+		value := fmt.Sprintf("{\"value\": %v}", i)
+		DB.Set(key, value)
+	}
+
+	DB.Sync()
+
+	items, err := DB.Where(func(item map[string]interface{}) bool {
+		return int(item["value"].(float64)) > 100
+	})
+
+	if err != nil {
+		t.Errorf("didn't expect an error here: %s", err)
+	}
+
+	if len(items) != 0 {
+		t.Errorf("expected length to be 0 but got %v", len(items))
+	}
 }

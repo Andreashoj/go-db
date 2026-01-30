@@ -13,6 +13,7 @@ type DB interface {
 	Delete(key string)
 	Find(handler func(item map[string]interface{}) bool) (map[string]interface{}, error)
 	Where(handler func(item map[string]interface{}) bool) ([]map[string]interface{}, error)
+	Index(key string) error
 	startQueueHandler()
 	clear()
 	Sync()
@@ -24,6 +25,7 @@ type db struct {
 	mu       sync.Mutex
 	requests chan []string
 	wg       sync.WaitGroup
+	indexes  map[string]map[interface{}]string
 }
 
 func NewDB(filePath string) (DB, error) {
@@ -44,6 +46,7 @@ func NewDB(filePath string) (DB, error) {
 		store:    make(map[string]string),
 		file:     file,
 		requests: make(chan []string), // Should be specific to type of requests, only writes needs to be "queued"
+		indexes:  make(map[string]map[interface{}]string),
 	}
 
 	// Initialize request handler
@@ -70,6 +73,25 @@ func (d *db) Set(key, value string) {
 func (d *db) set(key, value string) {
 	d.store[key] = value
 	d.save()
+}
+
+func (d *db) Index(key string) error {
+	indexMap := make(map[interface{}]string)
+	for k, value := range d.store {
+		var doc map[string]interface{}
+		err := json.Unmarshal([]byte(value), &doc)
+		if err != nil {
+			return fmt.Errorf("failed decoding db value %s, got error %s", value, err)
+		}
+
+		val, exists := doc[key]
+		if exists {
+			indexMap[val] = k
+		}
+	}
+
+	d.indexes[key] = indexMap
+	return nil
 }
 
 func (d *db) Get(key string) (string, error) { // TODO: Allow multiple reads to happen at once
@@ -106,8 +128,34 @@ func (d *db) Where(handler func(item map[string]interface{}) bool) ([]map[string
 	return matches, nil
 }
 
+func (d *db) WhereIndexed(indexKey string, handler func(value interface{}) bool) ([]map[string]interface{}, error) {
+	var matches []map[string]interface{}
+	index, exists := d.indexes[indexKey]
+
+	if !exists {
+		return nil, fmt.Errorf("index doesn't exist")
+	}
+
+	// FINISH THIS.
+	for k, v := range index {
+		var doc map[string]interface{}
+		err := json.Unmarshal([]byte(v), doc)
+		if err != nil {
+			return nil, fmt.Errorf("failed decoding value %s for key %s with error %s", v, k, err)
+		}
+
+		if handler(k) {
+			matches = append(matches, d.store[v])
+		}
+	}
+
+	return matches, nil
+}
+
 func (d *db) Find(handler func(item map[string]interface{}) bool) (map[string]interface{}, error) {
 	for key, value := range d.store {
+		fmt.Println(handler)
+
 		var mappedItem interface{}
 		err := json.Unmarshal([]byte(value), &mappedItem)
 		docMap := mappedItem.(map[string]interface{})
